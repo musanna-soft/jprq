@@ -1,5 +1,7 @@
-name: build-and-deploy
+name: build-test-deploy
 
+# Sequential pipeline: build → test → deploy.
+# A failure in any stage stops the next one (jobs.<x>.needs).
 on:
   push:
     branches: [master]
@@ -43,8 +45,19 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  deploy:
+  test:
     needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: go test
+        run: go test ./server/config/... ./server/musanna/... ./server/events/... ./server/tunnel/... ./cli/...
+
+  deploy:
+    needs: [build, test]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout k8s-gitops
