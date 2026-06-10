@@ -157,7 +157,7 @@ func (j *Jprq) serveEventConn(conn net.Conn) error {
 	}
 	user, err := j.authenticator.Authenticate(request.AuthToken)
 	if err != nil {
-		return events.WriteError(conn, "authentication failed %s", "\n\tobtain auth token from https://tulki.musanna.uz/keys\n")
+		return events.WriteError(conn, "authentication failed %s", "\n\tobtain auth token from https://me.musanna.uz/keys\n")
 	}
 
 	// FORK PATCH (musanna-soft): allowed-users.csv tekshirivi olib tashlandi —

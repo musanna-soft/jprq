@@ -15,13 +15,16 @@ import (
 // FORK PATCH (musanna-soft): website static fayllarini embed qilamiz —
 // jprq-server bitta binar sifatida minimal website handlerlarini
 // (index, config.json, install.sh) ham ishga tushiradi. Auth UI'i
-// alohida frontend (tulki.musanna.uz) tomonidan ko'rsatiladi.
+// alohida frontend (me.musanna.uz) tomonidan ko'rsatiladi.
 
 //go:embed static/index.html
 var indexHTML string
 
 //go:embed static/install.sh
 var installerSH string
+
+//go:embed static/install.ps1
+var installerPS1 string
 
 func main() {
 	var (
@@ -59,6 +62,7 @@ func startWebsite(domain string) {
 	mux.HandleFunc("/", contentHandler(indexHTML, "text/html"))
 	mux.HandleFunc("/config.json", configHandler(domain))
 	mux.HandleFunc("/install.sh", contentHandler(installerSH, "text/x-shellscript"))
+	mux.HandleFunc("/install.ps1", contentHandler(installerPS1, "text/plain; charset=utf-8"))
 
 	addr := "127.0.0.1:" + port
 	log.Printf("website: listening on %s (proxied via %s)", addr, domain)

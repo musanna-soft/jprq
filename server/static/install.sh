@@ -27,4 +27,4 @@ if ! chmod +x "$INSTALL_DIR/jprq"; then
 fi
 
 echo "jprq is successfully installed"
-echo "Get your auth token at https://tulki.musanna.uz/keys, then run: jprq auth <token>"
+echo "Get your auth token at https://me.musanna.uz/keys, then run: jprq auth <token>"

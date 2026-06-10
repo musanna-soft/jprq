@@ -79,7 +79,7 @@
     <div style="text-align: center;">
         <h1>Tulki — lokal serverni internetga ochish</h1>
         <p>Bepul, ochiq tunnel servisi. Musanna hisobi orqali kiring.</p>
-        <a class="cta" href="https://tulki.musanna.uz/keys">Boshqaruv paneliga kirish</a>
+        <a class="cta" href="https://me.musanna.uz/keys">Boshqaruv paneliga kirish</a>
     </div>
 
     <h3>Tulki nima?</h3>
@@ -88,11 +88,15 @@
         <li>TCP protokollarini qo'llab-quvvatlaydi: HTTP, SSH va boshqalar.</li>
     </ul>
 
-    <h3>O'rnatish / yangilash</h3>
+    <h3>O'rnatish / yangilash (Linux, macOS)</h3>
     <pre>$ <code class="language-sh">curl -fsSL https://tulki.uz/install.sh | sudo bash</code></pre>
 
+    <h3>O'rnatish / yangilash (Windows)</h3>
+    <p>PowerShell'da:</p>
+    <pre>PS&gt; <code class="language-powershell">iwr -useb https://tulki.uz/install.ps1 | iex</code></pre>
+
     <h3>Avtorizatsiya</h3>
-    <p>Avval <a href="https://tulki.musanna.uz/keys" target="_blank">tulki.musanna.uz/keys</a> sahifasidan API kalit yarating, so'ngra:</p>
+    <p>Avval <a href="https://me.musanna.uz/keys" target="_blank">me.musanna.uz/keys</a> sahifasidan API kalit yarating, so'ngra:</p>
     <pre>$ <code class="language-sh">jprq auth &lt;your-auth-token&gt;</code></pre>
 
     <h3>HTTP tunnel ochish</h3>
