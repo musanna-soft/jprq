@@ -48,14 +48,20 @@ func (j *Jprq) Init(conf config.Config, oauth github.Authenticator) error {
 	if err := j.publicServer.Init(conf.PublicServerPort, "jprq_public_server"); err != nil {
 		return err
 	}
-	err := j.publicServerTLS.InitTLS(conf.PublicServerTLSPort, "jprq_public_server_tls", conf.TLSCertFile, conf.TLSKeyFile)
-	return err
+	// FORK PATCH (musanna-soft): TLS port=0 bo'lsa, TLS server o'chiq
+	// (ingress orqali terminate qilinadi).
+	if conf.PublicServerTLSPort == 0 {
+		return nil
+	}
+	return j.publicServerTLS.InitTLS(conf.PublicServerTLSPort, "jprq_public_server_tls", conf.TLSCertFile, conf.TLSKeyFile)
 }
 
 func (j *Jprq) Start() {
 	go j.eventServer.Start(j.serveEventConn)
 	go j.publicServer.Start(j.servePublicConn)
-	go j.publicServerTLS.Start(j.servePublicConn)
+	if j.config.PublicServerTLSPort != 0 {
+		go j.publicServerTLS.Start(j.servePublicConn)
+	}
 
 	go func() { // periodically load allowed users
 		j.loadAllowedUsers()
@@ -72,8 +78,10 @@ func (j *Jprq) Stop() error {
 	if err := j.publicServer.Stop(); err != nil {
 		return err
 	}
-	err := j.publicServerTLS.Stop()
-	return err
+	if j.config.PublicServerTLSPort != 0 {
+		return j.publicServerTLS.Stop()
+	}
+	return nil
 }
 
 func (j *Jprq) servePublicConn(conn net.Conn) error {
