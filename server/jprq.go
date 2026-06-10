@@ -79,6 +79,13 @@ func (j *Jprq) servePublicConn(conn net.Conn) error {
 		writeResponse(conn, 400, "Bad Request", "Bad Request")
 		return nil
 	}
+	// FORK PATCH (musanna-soft): kubelet readinessProbe — `/healthz` chaqirig'i
+	// Host'dan qat'iy nazar darrov 200 qaytaradi (so'rovni website yoki
+	// tunnellarga forward qilmasdan).
+	if isHealthCheckRequest(buffer) {
+		writeResponse(conn, 200, "OK", "ok")
+		return nil
+	}
 	if tunnelHost, ok := j.cnameMap[host]; ok && tunnelHost != "" {
 		host = tunnelHost
 	}

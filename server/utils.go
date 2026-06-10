@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -64,6 +65,20 @@ func parseHost(r io.Reader) (string, []byte, error) {
 		return "", buffer, fmt.Errorf("no host detected")
 	}
 	return strings.TrimSpace(text[:right]), buffer, nil
+}
+
+// isHealthCheckRequest checks the first line of an HTTP request buffer for
+// `GET /healthz`. Used by servePublicConn to short-circuit kubelet probes.
+func isHealthCheckRequest(buffer []byte) bool {
+	if len(buffer) < 12 {
+		return false
+	}
+	nl := bytes.IndexByte(buffer, '\n')
+	if nl < 0 {
+		nl = len(buffer)
+	}
+	line := string(buffer[:nl])
+	return strings.HasPrefix(line, "GET /healthz") || strings.HasPrefix(line, "HEAD /healthz")
 }
 
 func writeResponse(conn io.WriteCloser, statusCode int, status string, message string) {
