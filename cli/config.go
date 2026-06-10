@@ -9,7 +9,15 @@ import (
 )
 
 var localConfig = ".jprq-config"
-var remoteConfig = "https://jprq.io/config.json"
+
+// FORK PATCH (musanna-soft): default remote config endpoint switched to the
+// self-hosted tulki.uz. JPRQ_REMOTE_CONFIG env var overrides for development.
+var remoteConfig = func() string {
+	if v := os.Getenv("JPRQ_REMOTE_CONFIG"); v != "" {
+		return v
+	}
+	return "https://tulki.uz/config.json"
+}()
 
 type Config struct {
 	Remote struct {
@@ -29,7 +37,7 @@ func (c *Config) Load() error {
 	filePath := filepath.Join(configDir, "jprq", localConfig)
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return fmt.Errorf("error: no auth token, obtain at https://jprq.io/auth")
+		return fmt.Errorf("error: no auth token, obtain at https://tulki.musanna.uz/keys")
 	}
 	if err := json.Unmarshal(data, &c.Local); err != nil {
 		return fmt.Errorf("error unmarshaling config file contents: %s", err)

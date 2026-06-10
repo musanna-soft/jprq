@@ -15,9 +15,6 @@ type Config struct {
 	PublicServerTLSPort uint16 // 0 → TLS server o'chiq (ingress terminate qiladi)
 	TLSCertFile         string
 	TLSKeyFile          string
-	GithubClientID      string
-	GithubClientSecret  string
-	AllowedUsersFile    string
 }
 
 func envPort(name string, def uint16) uint16 {
@@ -43,9 +40,6 @@ func (c *Config) Load() error {
 	c.DomainName = os.Getenv("JPRQ_DOMAIN")
 	c.TLSKeyFile = os.Getenv("JPRQ_TLS_KEY")
 	c.TLSCertFile = os.Getenv("JPRQ_TLS_CERT")
-	c.GithubClientID = os.Getenv("GITHUB_CLIENT_ID")
-	c.GithubClientSecret = os.Getenv("GITHUB_CLIENT_SECRET")
-	c.AllowedUsersFile = "/etc/jprq/allowed-users.csv"
 
 	if c.DomainName == "" {
 		return errors.New("jprq domain env is not set")
@@ -53,9 +47,6 @@ func (c *Config) Load() error {
 	// TLS port=0 bo'lsa TLS o'chiq — cert/key talab qilinmaydi
 	if c.PublicServerTLSPort != 0 && (c.TLSKeyFile == "" || c.TLSCertFile == "") {
 		return errors.New("TLS key/cert file is missing")
-	}
-	if c.GithubClientID == "" || c.GithubClientSecret == "" {
-		return errors.New("github client id/secret is missing")
 	}
 	return nil
 }

@@ -1,10 +1,8 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"os"
 	"strings"
@@ -12,7 +10,7 @@ import (
 
 	"github.com/azimjohn/jprq/server/config"
 	"github.com/azimjohn/jprq/server/events"
-	"github.com/azimjohn/jprq/server/github"
+	"github.com/azimjohn/jprq/server/musanna"
 	"github.com/azimjohn/jprq/server/server"
 	"github.com/azimjohn/jprq/server/tunnel"
 )
@@ -24,19 +22,16 @@ type Jprq struct {
 	eventServer     server.TCPServer
 	publicServer    server.TCPServer
 	publicServerTLS server.TCPServer
-	allowedUsers    map[string]string
-	allowedLastMod  time.Time
-	authenticator   github.Authenticator
+	authenticator   musanna.Authenticator
 	cnameMap        map[string]string
 	tcpTunnels      map[uint16]*tunnel.TCPTunnel
 	httpTunnels     map[string]*tunnel.HTTPTunnel
 	userTunnels     map[string]map[string]tunnel.Tunnel
 }
 
-func (j *Jprq) Init(conf config.Config, oauth github.Authenticator) error {
+func (j *Jprq) Init(conf config.Config, auth musanna.Authenticator) error {
 	j.config = conf
-	j.authenticator = oauth
-	j.allowedUsers = make(map[string]string)
+	j.authenticator = auth
 	j.cnameMap = make(map[string]string)
 	j.tcpTunnels = make(map[uint16]*tunnel.TCPTunnel)
 	j.httpTunnels = make(map[string]*tunnel.HTTPTunnel)
@@ -62,13 +57,6 @@ func (j *Jprq) Start() {
 	if j.config.PublicServerTLSPort != 0 {
 		go j.publicServerTLS.Start(j.servePublicConn)
 	}
-
-	go func() { // periodically load allowed users
-		j.loadAllowedUsers()
-		for range time.Tick(5 * time.Second) {
-			j.loadAllowedUsers()
-		}
-	}()
 }
 
 func (j *Jprq) Stop() error {
@@ -162,7 +150,7 @@ func (j *Jprq) serveEventConn(conn net.Conn) error {
 	}
 	user, err := j.authenticator.Authenticate(request.AuthToken)
 	if err != nil {
-		return events.WriteError(conn, "authentication failed %s", "\n\tobtain auth token from https://tulki.uz/auth\n")
+		return events.WriteError(conn, "authentication failed %s", "\n\tobtain auth token from https://tulki.musanna.uz/keys\n")
 	}
 
 	// FORK PATCH (musanna-soft): allowed-users.csv tekshirivi olib tashlandi —
@@ -244,32 +232,3 @@ func (j *Jprq) serveEventConn(conn net.Conn) error {
 	return nil
 }
 
-func (j *Jprq) loadAllowedUsers() {
-	stat, err := os.Stat(j.config.AllowedUsersFile)
-	if err != nil {
-		log.Printf("failed to stat blocked users file: %s", err)
-		return
-	}
-	if !stat.ModTime().After(j.allowedLastMod) {
-		return
-	}
-	file, err := os.Open(j.config.AllowedUsersFile)
-	if err != nil {
-		log.Printf("failed to read blocked users file: %s", err)
-		return
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	j.allowedUsers = make(map[string]string)
-
-	for scanner.Scan() {
-		fields := strings.Split(scanner.Text(), ",")
-		if len(fields) >= 2 {
-			login := strings.TrimSpace(fields[0])
-			j.allowedUsers[login] = strings.ToLower(fields[1])
-		}
-	}
-	j.allowedLastMod = stat.ModTime()
-	log.Println("allow-list updated")
-}

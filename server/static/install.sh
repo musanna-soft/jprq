@@ -2,7 +2,7 @@
 
 set -e
 
-URL_PREFIX="https://github.com/azimjohn/jprq/releases/download/2.4"
+URL_PREFIX="https://github.com/musanna-soft/jprq/releases/download/v1.0"
 INSTALL_DIR=${INSTALL_DIR:-/usr/local/bin}
 
 case "$(uname -sm)" in
@@ -27,3 +27,4 @@ if ! chmod +x "$INSTALL_DIR/jprq"; then
 fi
 
 echo "jprq is successfully installed"
+echo "Get your auth token at https://tulki.musanna.uz/keys, then run: jprq auth <token>"
