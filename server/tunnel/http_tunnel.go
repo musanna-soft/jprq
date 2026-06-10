@@ -1,40 +1,32 @@
 package tunnel
 
 import (
-	"io"
 	"net"
+
+	"github.com/azimjohn/jprq/server/events"
 )
 
 const DefaultHttpPort = 80
 
+// HTTPTunnel is a multiplexed HTTP tunnel — every public connection
+// becomes a stream over the shared event channel.
 type HTTPTunnel struct {
 	tunnel
 }
 
-func NewHTTP(hostname string, eventWriter io.Writer, maxConsLimit int) (*HTTPTunnel, error) {
-	t := &HTTPTunnel{
-		tunnel: newTunnel(hostname, eventWriter, maxConsLimit),
-	}
-	if err := t.privateServer.Init(0, "http-tunnel-private-server"); err != nil {
-		return t, err
-	}
-	return t, nil
+func NewHTTP(hostname string, event *events.FramedConn, maxConsLimit int) (*HTTPTunnel, error) {
+	return &HTTPTunnel{tunnel: newTunnel(hostname, event, maxConsLimit)}, nil
 }
 
-func (t *HTTPTunnel) Protocol() string {
-	return "http"
-}
+func (t *HTTPTunnel) Protocol() string         { return "http" }
+func (t *HTTPTunnel) PublicServerPort() uint16 { return DefaultHttpPort }
 
-func (t *HTTPTunnel) PublicServerPort() uint16 {
-	return DefaultHttpPort
-}
+// Open is a no-op: there is no per-tunnel listener anymore. The shared
+// `publicServer` in jprq.go demuxes incoming connections by Host header.
+func (t *HTTPTunnel) Open() {}
 
-func (t *HTTPTunnel) Open() {
-	go t.privateServer.Start(t.privateConnectionHandler)
-}
-
+// PublicConnectionHandler is invoked by the demuxer for each public
+// connection whose Host matches this tunnel.
 func (t *HTTPTunnel) PublicConnectionHandler(publicCon net.Conn, initialBuffer []byte) error {
-	port := uint16(publicCon.RemoteAddr().(*net.TCPAddr).Port)
-	t.initialBuffer[port] = initialBuffer
-	return t.publicConnectionHandler(publicCon)
+	return t.handlePublicConn(publicCon, initialBuffer)
 }

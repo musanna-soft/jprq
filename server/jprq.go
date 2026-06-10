@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/azimjohn/jprq/server/config"
@@ -23,9 +24,10 @@ type Jprq struct {
 	publicServer    server.TCPServer
 	publicServerTLS server.TCPServer
 	authenticator   musanna.Authenticator
+	mu              sync.RWMutex
 	cnameMap        map[string]string
-	tcpTunnels      map[uint16]*tunnel.TCPTunnel
-	httpTunnels     map[string]*tunnel.HTTPTunnel
+	tcpTunnels      map[uint16]tunnel.Tunnel
+	httpTunnels     map[string]tunnel.Tunnel
 	userTunnels     map[string]map[string]tunnel.Tunnel
 }
 
@@ -33,8 +35,8 @@ func (j *Jprq) Init(conf config.Config, auth musanna.Authenticator) error {
 	j.config = conf
 	j.authenticator = auth
 	j.cnameMap = make(map[string]string)
-	j.tcpTunnels = make(map[uint16]*tunnel.TCPTunnel)
-	j.httpTunnels = make(map[string]*tunnel.HTTPTunnel)
+	j.tcpTunnels = make(map[uint16]tunnel.Tunnel)
+	j.httpTunnels = make(map[string]tunnel.Tunnel)
 	j.userTunnels = make(map[string]map[string]tunnel.Tunnel)
 
 	if err := j.eventServer.Init(conf.EventServerPort, "jprq_event_server"); err != nil {
@@ -80,36 +82,36 @@ func (j *Jprq) servePublicConn(conn net.Conn) error {
 		return nil
 	}
 	// FORK PATCH (musanna-soft): kubelet readinessProbe — `/healthz` chaqirig'i
-	// Host'dan qat'iy nazar darrov 200 qaytaradi (so'rovni website yoki
-	// tunnellarga forward qilmasdan).
+	// Host'dan qat'iy nazar darrov 200 qaytaradi.
 	if isHealthCheckRequest(buffer) {
 		writeResponse(conn, 200, "OK", "ok")
 		return nil
 	}
+	j.mu.RLock()
 	if tunnelHost, ok := j.cnameMap[host]; ok && tunnelHost != "" {
 		host = tunnelHost
 	}
+	j.mu.RUnlock()
 	host = strings.ToLower(host)
 
-	// FORK PATCH (musanna-soft): bazaviy domen (tulki.uz, www.tulki.uz) → ichki
-	// website serverga proxy. Tunnellardan farqli o'laroq, bu domenga (subdomain'siz)
-	// kirgan foydalanuvchilar /, /auth, /oauth-callback va h.k. endpointlarga
-	// kirishadi (OAuth flow, token olish).
+	// FORK PATCH (musanna-soft): bazaviy domen → embedded website.
 	if host == j.config.DomainName || host == "www."+j.config.DomainName {
 		return j.proxyToWebsite(conn, buffer)
 	}
 
+	j.mu.RLock()
 	t, found := j.httpTunnels[host]
+	j.mu.RUnlock()
 	if !found {
-		writeResponse(conn, 404, "Not Found", fmt.Sprintf("tunnel not found. create one at https://%s/auth", j.config.DomainName))
+		writeResponse(conn, 404, "Not Found", fmt.Sprintf("tunnel not found. create one at https://%s/", j.config.DomainName))
 		return fmt.Errorf("unknown host requested %s", host)
 	}
+	conn.SetReadDeadline(time.Time{})
 	return t.PublicConnectionHandler(conn, buffer)
 }
 
 // proxyToWebsite — bazaviy domen so'rovini ichki website serverga uzatadi
-// (TCP forward). Website server localhost:3300 da ishlaydi (server/main.go da
-// goroutine sifatida ishga tushadi).
+// (TCP forward). Website server localhost:3300 da ishlaydi.
 func (j *Jprq) proxyToWebsite(conn net.Conn, buffer []byte) error {
 	defer conn.Close()
 	port := os.Getenv("JPRQ_WEBSITE_PORT")
@@ -122,7 +124,7 @@ func (j *Jprq) proxyToWebsite(conn net.Conn, buffer []byte) error {
 		return err
 	}
 	defer upstream.Close()
-	conn.SetReadDeadline(time.Time{}) // o'chirib qo'yamiz — proxy ishlash davomida deadline kerakmas
+	conn.SetReadDeadline(time.Time{})
 	if _, err := upstream.Write(buffer); err != nil {
 		return err
 	}
@@ -145,97 +147,132 @@ func (j *Jprq) proxyToWebsite(conn net.Conn, buffer []byte) error {
 
 func (j *Jprq) serveEventConn(conn net.Conn) error {
 	defer conn.Close()
+	framed := events.NewFramedConn(conn)
 
-	var event events.Event[events.TunnelRequested]
-	if err := event.Read(conn); err != nil {
+	// Expect MsgTunnelRequested first.
+	var first events.Message
+	if err := framed.Recv(&first); err != nil {
+		return err
+	}
+	req, err := events.DecodeTunnelRequested(&first)
+	if err != nil {
 		return err
 	}
 
-	request := event.Data
-	if request.Protocol != events.HTTP && request.Protocol != events.TCP {
-		return events.WriteError(conn, "invalid protocol %s", request.Protocol)
-	}
-	user, err := j.authenticator.Authenticate(request.AuthToken)
-	if err != nil {
-		return events.WriteError(conn, "authentication failed %s", "\n\tobtain auth token from https://me.musanna.uz/keys\n")
+	if req.Protocol != events.HTTP && req.Protocol != events.TCP {
+		return events.WriteError(framed, "invalid protocol %s", req.Protocol)
 	}
 
-	// FORK PATCH (musanna-soft): allowed-users.csv tekshirivi olib tashlandi —
-	// GitHub OAuth orqali kirgan har bir foydalanuvchi ruxsat oladi (tulki.uz open service).
+	user, err := j.authenticator.Authenticate(req.AuthToken)
+	if err != nil {
+		return events.WriteError(framed, "authentication failed%s", "\n\tobtain auth token from https://me.musanna.uz/keys\n")
+	}
+
+	j.mu.Lock()
 	if len(j.userTunnels[user.Login]) >= j.config.MaxTunnelsPerUser {
-		return events.WriteError(conn, "tunnels limit reached for %s", user.Login)
+		j.mu.Unlock()
+		return events.WriteError(framed, "tunnels limit reached for %s", user.Login)
 	}
-	if request.Subdomain == "" {
-		request.Subdomain = user.Login
+	j.mu.Unlock()
+
+	if req.Subdomain == "" {
+		req.Subdomain = user.Login
 	}
-	if err := validate(&request.Subdomain); err != nil {
-		return events.WriteError(conn, "invalid subdomain %s: %s", request.Subdomain, err.Error())
+	if err := validate(&req.Subdomain); err != nil {
+		return events.WriteError(framed, "invalid subdomain %s: %s", req.Subdomain, err.Error())
 	}
-	hostname := fmt.Sprintf("%s.%s", request.Subdomain, j.config.DomainName)
+	hostname := fmt.Sprintf("%s.%s", req.Subdomain, j.config.DomainName)
+	j.mu.Lock()
 	if _, ok := j.httpTunnels[hostname]; ok {
-		return events.WriteError(conn, "subdomain is busy: %s, try another one", request.Subdomain)
+		j.mu.Unlock()
+		return events.WriteError(framed, "subdomain is busy: %s, try another one", req.Subdomain)
 	}
-	cname := request.CanonName
-	if _, ok := j.cnameMap[cname]; ok && cname != "" {
-		return events.WriteError(conn, "cname is busy: %s, try another one", request.CanonName)
+	if _, ok := j.cnameMap[req.CanonName]; ok && req.CanonName != "" {
+		j.mu.Unlock()
+		return events.WriteError(framed, "cname is busy: %s, try another one", req.CanonName)
 	}
+	j.mu.Unlock()
 
 	var t tunnel.Tunnel
-	var maxConsLimit = j.config.MaxConsPerTunnel
+	maxConsLimit := j.config.MaxConsPerTunnel
 
-	switch request.Protocol {
+	switch req.Protocol {
 	case events.HTTP:
-		tn, err := tunnel.NewHTTP(hostname, conn, maxConsLimit)
+		tn, err := tunnel.NewHTTP(hostname, framed, maxConsLimit)
 		if err != nil {
-			return events.WriteError(conn, "failed to create http tunnel", err.Error())
+			return events.WriteError(framed, "failed to create http tunnel: %s", err.Error())
 		}
-		j.cnameMap[cname] = hostname
+		j.mu.Lock()
+		j.cnameMap[req.CanonName] = hostname
 		j.httpTunnels[hostname] = tn
-		defer delete(j.cnameMap, cname)
-		defer delete(j.httpTunnels, hostname)
+		j.mu.Unlock()
+		defer func() {
+			j.mu.Lock()
+			delete(j.cnameMap, req.CanonName)
+			delete(j.httpTunnels, hostname)
+			j.mu.Unlock()
+		}()
 		t = tn
 	case events.TCP:
-		tn, err := tunnel.NewTCP(hostname, conn, maxConsLimit)
+		tn, err := tunnel.NewTCP(hostname, framed, maxConsLimit)
 		if err != nil {
-			return events.WriteError(conn, "failed to create tcp tunnel", err.Error())
+			return events.WriteError(framed, "failed to create tcp tunnel: %s", err.Error())
 		}
+		j.mu.Lock()
 		j.tcpTunnels[tn.PublicServerPort()] = tn
-		defer delete(j.tcpTunnels, tn.PublicServerPort())
+		j.mu.Unlock()
+		defer func() {
+			j.mu.Lock()
+			delete(j.tcpTunnels, tn.PublicServerPort())
+			j.mu.Unlock()
+		}()
 		t = tn
 	}
 
-	if len(j.userTunnels[user.Login]) == 0 {
+	j.mu.Lock()
+	if _, ok := j.userTunnels[user.Login]; !ok {
 		j.userTunnels[user.Login] = make(map[string]tunnel.Tunnel)
 	}
 	tunnelId := fmt.Sprintf("%s:%d", t.Hostname(), t.PublicServerPort())
 	j.userTunnels[user.Login][tunnelId] = t
-	defer delete(j.userTunnels[user.Login], tunnelId)
+	j.mu.Unlock()
+	defer func() {
+		j.mu.Lock()
+		delete(j.userTunnels[user.Login], tunnelId)
+		j.mu.Unlock()
+	}()
 
 	t.Open()
 	defer t.Close()
-	opened := events.Event[events.TunnelOpened]{
-		Data: &events.TunnelOpened{
-			Hostname:      t.Hostname(),
-			Protocol:      t.Protocol(),
-			PublicServer:  t.PublicServerPort(),
-			PrivateServer: t.PrivateServerPort(),
-		},
-	}
-	if err := opened.Write(conn); err != nil {
+
+	if err := framed.SendControl(events.MsgTunnelOpened, &events.TunnelOpened{
+		Hostname:     t.Hostname(),
+		Protocol:     t.Protocol(),
+		PublicServer: t.PublicServerPort(),
+	}); err != nil {
 		return err
 	}
 
 	fmt.Printf("%s [tunnel-opened] %s: %s\n", time.Now().Format(dateFormat), user.Login, tunnelId)
 
-	buffer := make([]byte, 8) // wait until connection is closed
+	// Read multiplexed frames from CLI until the connection drops.
 	for {
-		_ = conn.SetReadDeadline(time.Now().Add(time.Minute))
-		if _, err := conn.Read(buffer); err == io.EOF {
+		var m events.Message
+		if err := framed.Recv(&m); err != nil {
 			break
 		}
-		// FORK PATCH (musanna-soft): allowed-users tekshiruvi olib tashlandi.
+		switch m.Type {
+		case events.MsgConnectionData:
+			if err := t.DispatchData(m.StreamID, m.Payload); err != nil {
+				// stream may have already closed — silently ignore
+			}
+		case events.MsgConnectionClose:
+			t.DispatchClose(m.StreamID)
+		case events.MsgPing:
+			// no-op
+		}
 	}
+
 	fmt.Printf("%s [tunnel-closed] %s: %s\n", time.Now().Format(dateFormat), user.Login, tunnelId)
 	return nil
 }
-
