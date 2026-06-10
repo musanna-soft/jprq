@@ -13,6 +13,16 @@ import (
 	"github.com/azimjohn/jprq/server/events"
 )
 
+// stream tracks a single multiplexed public connection in flight.
+// Data frames may arrive before the local dial completes — they're held
+// in `pending` until the goroutine attaches the local conn.
+type stream struct {
+	mu       sync.Mutex
+	localCon net.Conn
+	pending  [][]byte
+	closed   bool
+}
+
 type jprqClient struct {
 	config       Config
 	protocol     string
@@ -24,7 +34,7 @@ type jprqClient struct {
 
 	framed   *events.FramedConn
 	streamMu sync.Mutex
-	streams  map[uint32]net.Conn
+	streams  map[uint32]*stream
 }
 
 func (j *jprqClient) Start(port int, debug bool) {
@@ -34,7 +44,7 @@ func (j *jprqClient) Start(port int, debug bool) {
 	}
 	defer eventCon.Close()
 	j.framed = events.NewFramedConn(eventCon)
-	j.streams = make(map[uint32]net.Conn)
+	j.streams = make(map[uint32]*stream)
 
 	if err := j.framed.SendControl(events.MsgTunnelRequested, &events.TunnelRequested{
 		Protocol:   j.protocol,
@@ -78,8 +88,6 @@ func (j *jprqClient) Start(port int, debug bool) {
 		}
 	}
 
-	// Multiplexed event loop: dispatch incoming MsgConnectionOpened / Data /
-	// Close frames to local connections, each routed by stream id.
 	for {
 		var m events.Message
 		if err := j.framed.Recv(&m); err != nil {
@@ -91,60 +99,97 @@ func (j *jprqClient) Start(port int, debug bool) {
 		}
 		switch m.Type {
 		case events.MsgConnectionOpened:
-			go j.handleNewStream(m.StreamID)
+			j.openStream(m.StreamID)
 		case events.MsgConnectionData:
-			j.dispatchData(m.StreamID, m.Payload)
+			j.deliverData(m.StreamID, m.Payload)
 		case events.MsgConnectionClose:
 			j.closeStream(m.StreamID)
 		case events.MsgConnectionLimit:
-			// optional — could surface rate-limit info; ignore for now
+			// ignore for now
 		}
 	}
 }
 
-// handleNewStream dials the local server for a new public connection and
-// starts pumping bytes from local → event channel as MsgConnectionData.
-func (j *jprqClient) handleNewStream(streamID uint32) {
-	localCon, err := net.Dial("tcp", j.localServer)
-	if err != nil {
-		log.Printf("failed to connect to local server: %s\n", err)
-		_ = j.framed.Send(&events.Message{Type: events.MsgConnectionClose, StreamID: streamID})
-		return
-	}
-
+// openStream allocates the stream synchronously (so subsequent data frames
+// always find it) and dials the local server in the background, draining
+// any pending payloads as soon as the local connection is ready.
+func (j *jprqClient) openStream(streamID uint32) {
+	s := &stream{}
 	j.streamMu.Lock()
-	j.streams[streamID] = localCon
+	j.streams[streamID] = s
 	j.streamMu.Unlock()
 
-	defer j.closeStream(streamID)
+	go func() {
+		localCon, err := net.Dial("tcp", j.localServer)
+		if err != nil {
+			log.Printf("failed to connect to local server: %s\n", err)
+			j.closeStream(streamID)
+			return
+		}
 
-	buf := make([]byte, events.MaxPayloadLen)
-	for {
-		_ = localCon.SetReadDeadline(time.Now().Add(30 * time.Second))
-		n, err := localCon.Read(buf)
-		if n > 0 {
-			if werr := j.framed.Send(&events.Message{
-				Type:     events.MsgConnectionData,
-				StreamID: streamID,
-				Payload:  append([]byte{}, buf[:n]...),
-			}); werr != nil {
+		s.mu.Lock()
+		if s.closed {
+			s.mu.Unlock()
+			_ = localCon.Close()
+			return
+		}
+		s.localCon = localCon
+		pending := s.pending
+		s.pending = nil
+		s.mu.Unlock()
+
+		// Replay anything that arrived before the local dial finished.
+		for _, p := range pending {
+			if _, werr := localCon.Write(p); werr != nil {
+				j.closeStream(streamID)
 				return
 			}
 		}
-		if err != nil {
-			break
+
+		// Pump local → event channel as MsgConnectionData frames.
+		buf := make([]byte, events.MaxPayloadLen)
+		for {
+			_ = localCon.SetReadDeadline(time.Now().Add(30 * time.Second))
+			n, err := localCon.Read(buf)
+			if n > 0 {
+				if werr := j.framed.Send(&events.Message{
+					Type:     events.MsgConnectionData,
+					StreamID: streamID,
+					Payload:  append([]byte{}, buf[:n]...),
+				}); werr != nil {
+					break
+				}
+			}
+			if err != nil {
+				break
+			}
 		}
-	}
-	_ = j.framed.Send(&events.Message{Type: events.MsgConnectionClose, StreamID: streamID})
+		_ = j.framed.Send(&events.Message{Type: events.MsgConnectionClose, StreamID: streamID})
+		j.closeStream(streamID)
+	}()
 }
 
-func (j *jprqClient) dispatchData(streamID uint32, data []byte) {
+// deliverData writes incoming bytes to the local connection if it's
+// ready, otherwise buffers them until openStream's goroutine attaches.
+func (j *jprqClient) deliverData(streamID uint32, data []byte) {
 	j.streamMu.Lock()
-	c, ok := j.streams[streamID]
+	s, ok := j.streams[streamID]
 	j.streamMu.Unlock()
 	if !ok {
 		return
 	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	if s.localCon == nil {
+		s.pending = append(s.pending, append([]byte{}, data...))
+		s.mu.Unlock()
+		return
+	}
+	c := s.localCon
+	s.mu.Unlock()
 	if _, err := c.Write(data); err != nil {
 		j.closeStream(streamID)
 	}
@@ -152,12 +197,21 @@ func (j *jprqClient) dispatchData(streamID uint32, data []byte) {
 
 func (j *jprqClient) closeStream(streamID uint32) {
 	j.streamMu.Lock()
-	c, ok := j.streams[streamID]
+	s, ok := j.streams[streamID]
 	if ok {
 		delete(j.streams, streamID)
 	}
 	j.streamMu.Unlock()
-	if ok && c != nil {
+	if !ok {
+		return
+	}
+	s.mu.Lock()
+	s.closed = true
+	c := s.localCon
+	s.localCon = nil
+	s.pending = nil
+	s.mu.Unlock()
+	if c != nil {
 		_ = c.Close()
 	}
 }
