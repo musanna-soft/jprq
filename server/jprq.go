@@ -87,12 +87,57 @@ func (j *Jprq) servePublicConn(conn net.Conn) error {
 		host = tunnelHost
 	}
 	host = strings.ToLower(host)
+
+	// FORK PATCH (musanna-soft): bazaviy domen (tulki.uz, www.tulki.uz) → ichki
+	// website serverga proxy. Tunnellardan farqli o'laroq, bu domenga (subdomain'siz)
+	// kirgan foydalanuvchilar /, /auth, /oauth-callback va h.k. endpointlarga
+	// kirishadi (OAuth flow, token olish).
+	if host == j.config.DomainName || host == "www."+j.config.DomainName {
+		return j.proxyToWebsite(conn, buffer)
+	}
+
 	t, found := j.httpTunnels[host]
 	if !found {
-		writeResponse(conn, 404, "Not Found", "tunnel not found. create one at jprq.io")
+		writeResponse(conn, 404, "Not Found", fmt.Sprintf("tunnel not found. create one at https://%s/auth", j.config.DomainName))
 		return fmt.Errorf("unknown host requested %s", host)
 	}
 	return t.PublicConnectionHandler(conn, buffer)
+}
+
+// proxyToWebsite — bazaviy domen so'rovini ichki website serverga uzatadi
+// (TCP forward). Website server localhost:3300 da ishlaydi (server/main.go da
+// goroutine sifatida ishga tushadi).
+func (j *Jprq) proxyToWebsite(conn net.Conn, buffer []byte) error {
+	defer conn.Close()
+	port := os.Getenv("JPRQ_WEBSITE_PORT")
+	if port == "" {
+		port = "3300"
+	}
+	upstream, err := net.DialTimeout("tcp", "127.0.0.1:"+port, 3*time.Second)
+	if err != nil {
+		writeResponse(conn, 502, "Bad Gateway", "website server unreachable")
+		return err
+	}
+	defer upstream.Close()
+	conn.SetReadDeadline(time.Time{}) // o'chirib qo'yamiz — proxy ishlash davomida deadline kerakmas
+	if _, err := upstream.Write(buffer); err != nil {
+		return err
+	}
+	done := make(chan struct{}, 2)
+	go func() {
+		_, _ = io.Copy(upstream, conn)
+		_ = upstream.(*net.TCPConn).CloseWrite()
+		done <- struct{}{}
+	}()
+	go func() {
+		_, _ = io.Copy(conn, upstream)
+		if tc, ok := conn.(*net.TCPConn); ok {
+			_ = tc.CloseWrite()
+		}
+		done <- struct{}{}
+	}()
+	<-done
+	return nil
 }
 
 func (j *Jprq) serveEventConn(conn net.Conn) error {
@@ -109,12 +154,11 @@ func (j *Jprq) serveEventConn(conn net.Conn) error {
 	}
 	user, err := j.authenticator.Authenticate(request.AuthToken)
 	if err != nil {
-		return events.WriteError(conn, "authentication failed %s", "\n\tobtain auth token from https://jprq.io/auth\n")
+		return events.WriteError(conn, "authentication failed %s", "\n\tobtain auth token from https://tulki.uz/auth\n")
 	}
 
-	if _, found := j.allowedUsers[user.Login]; !found && !user.Allowed {
-		return events.WriteError(conn, "jprq is now invite-only service %s\n", "\n\tbuy membership - https://buymeacoffee.com/azimjon \n")
-	}
+	// FORK PATCH (musanna-soft): allowed-users.csv tekshirivi olib tashlandi —
+	// GitHub OAuth orqali kirgan har bir foydalanuvchi ruxsat oladi (tulki.uz open service).
 	if len(j.userTunnels[user.Login]) >= j.config.MaxTunnelsPerUser {
 		return events.WriteError(conn, "tunnels limit reached for %s", user.Login)
 	}
@@ -186,9 +230,7 @@ func (j *Jprq) serveEventConn(conn net.Conn) error {
 		if _, err := conn.Read(buffer); err == io.EOF {
 			break
 		}
-		if _, found := j.allowedUsers[user.Login]; !found && !user.Allowed {
-			break
-		}
+		// FORK PATCH (musanna-soft): allowed-users tekshiruvi olib tashlandi.
 	}
 	fmt.Printf("%s [tunnel-closed] %s: %s\n", time.Now().Format(dateFormat), user.Login, tunnelId)
 	return nil

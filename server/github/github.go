@@ -1,12 +1,11 @@
 package github
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -33,22 +32,28 @@ type github struct {
 	clientSecret string
 	defaultScope string
 	userEndpoint string
-	qir2Endpoint string
-	authURL      string
 	redirectUri  string
 	httpClient   *http.Client
 }
 
 func New(clientId, clientSecret string) Authenticator {
+	// FORK PATCH (musanna-soft): endpointlarni env'dan o'qiymiz.
+	// JPRQ_REDIRECT_URI default sifatida JPRQ_DOMAIN'dan tuziladi.
+	redirectUri := os.Getenv("JPRQ_REDIRECT_URI")
+	if redirectUri == "" {
+		if d := os.Getenv("JPRQ_DOMAIN"); d != "" {
+			redirectUri = fmt.Sprintf("https://%s/oauth-callback", d)
+		} else {
+			redirectUri = "https://tulki.uz/oauth-callback"
+		}
+	}
 	return github{
 		clientId:     clientId,
 		clientSecret: clientSecret,
 		defaultScope: "user:email",
 		userEndpoint: "https://api.github.com/user",
-		redirectUri:  "https://jprq.io/oauth-callback",
-		qir2Endpoint: "https://api.42.uz/api/profile/jprq/",
-		authURL:      "https://web.jprq.io/api/auth/validate",
-		httpClient:   &http.Client{Timeout: 2 * time.Second},
+		redirectUri:  redirectUri,
+		httpClient:   &http.Client{Timeout: 5 * time.Second},
 	}
 }
 
@@ -102,25 +107,10 @@ func (g github) ObtainToken(code string) (string, error) {
 }
 
 func (g github) Authenticate(token string) (User, error) {
-	user, err := g.authenticate(g.userEndpoint, token)
-	if err != nil {
-		user, err = g.authenticate(g.qir2Endpoint, token)
-	}
-
-	if user.Allowed {
-		return user, nil
-	}
-
-	result, err := g.validateWithAuth(user.Login)
-	if err != nil {
-		log.Printf("auth validate failed for %s: %v", user.Login, err)
-		return user, nil
-	}
-	if result.Allowed {
-		user.Allowed = true
-		user.Tier = result.Tier
-	}
-	return user, nil
+	// FORK PATCH (musanna-soft): qir2Endpoint va validateWithAuth (jprq.io)
+	// chaqiriqlari olib tashlandi — GitHub orqali kirgan har bir foydalanuvchi
+	// ruxsat oladi (jprq.go dagi allowedUsers tekshiruvi ham olib tashlangan).
+	return g.authenticate(g.userEndpoint, token)
 }
 
 func (g github) authenticate(endpoint, token string) (User, error) {
@@ -145,32 +135,6 @@ func (g github) authenticate(endpoint, token string) (User, error) {
 	return user, nil
 }
 
-type authValidateResult struct {
-	Allowed bool   `json:"allowed"`
-	Tier    string `json:"tier"`
-}
-
-// validateWithAuth asks the auth service whether the given GitHub login has
-// an active jprq subscription.
-func (g github) validateWithAuth(login string) (authValidateResult, error) {
-	var result authValidateResult
-
-	body, _ := json.Marshal(map[string]string{"github_login": login})
-	req, _ := http.NewRequest(http.MethodPost, g.authURL, bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := g.client().Do(req)
-	if err != nil {
-		return result, fmt.Errorf("call auth service: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return result, fmt.Errorf("auth service returned http %d", resp.StatusCode)
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return result, fmt.Errorf("decode response: %w", err)
-	}
-	return result, nil
-}
+// FORK PATCH (musanna-soft): authValidateResult va validateWithAuth funksiyasi
+// olib tashlandi (eski jprq.io xizmatiga so'rov yuborar edi — bizning
+// self-hosted o'rnatuvda kerakmas).
