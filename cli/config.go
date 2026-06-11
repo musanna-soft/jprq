@@ -37,7 +37,7 @@ func (c *Config) Load() error {
 	filePath := filepath.Join(configDir, "jprq", localConfig)
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return fmt.Errorf("error: no auth token, obtain at https://me.musanna.uz/keys")
+		return fmt.Errorf("error: no auth token, obtain at https://me.musanna.uz/api-keys")
 	}
 	if err := json.Unmarshal(data, &c.Local); err != nil {
 		return fmt.Errorf("error unmarshaling config file contents: %s", err)

@@ -34,4 +34,4 @@ if (-not ($UserPath -split ";" | Where-Object { $_ -ieq $InstallDir })) {
 
 Write-Host ""
 Write-Host "jprq is successfully installed at $Target"
-Write-Host "Get your auth token at https://me.musanna.uz/keys, then run: jprq auth <token>"
+Write-Host "Get your auth token at https://me.musanna.uz/api-keys, then run: jprq auth <token>"

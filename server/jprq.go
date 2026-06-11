@@ -165,7 +165,7 @@ func (j *Jprq) serveEventConn(conn net.Conn) error {
 
 	user, err := j.authenticator.Authenticate(req.AuthToken)
 	if err != nil {
-		return events.WriteError(framed, "authentication failed%s", "\n\tobtain auth token from https://me.musanna.uz/keys\n")
+		return events.WriteError(framed, "authentication failed%s", "\n\tobtain auth token from https://me.musanna.uz/api-keys\n")
 	}
 
 	j.mu.Lock()
