@@ -129,6 +129,10 @@ type TunnelRequested struct {
 	CanonName  string
 	AuthToken  string
 	CliVersion string
+	// PublicPort lets a TCP tunnel ask for a specific public port (e.g.
+	// 33042 → ssh.tulki.uz:33042 every time) instead of a random one. 0
+	// means "auto-assign". Ignored for HTTP tunnels.
+	PublicPort uint16
 }
 
 type TunnelOpened struct {

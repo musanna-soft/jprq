@@ -221,7 +221,22 @@ func (j *Jprq) serveEventConn(conn net.Conn) error {
 		}()
 		t = tn
 	case events.TCP:
-		tn, err := tunnel.NewTCP(hostname, framed, maxConsLimit)
+		// Custom public port is only honoured inside the reserved range so
+		// users can't squat on 22 / 80 / 443 / 4321 or anything outside what
+		// the hostPort range exposes (33000-33099 by deploy config).
+		requested := req.PublicPort
+		if requested != 0 && (requested < 33000 || requested > 33009) {
+			return events.WriteError(framed, "public port out of allowed range 33000-33009%s", "")
+		}
+		j.mu.Lock()
+		if requested != 0 {
+			if _, busy := j.tcpTunnels[requested]; busy {
+				j.mu.Unlock()
+				return events.WriteError(framed, "public port is busy, try another one%s", "")
+			}
+		}
+		j.mu.Unlock()
+		tn, err := tunnel.NewTCP(hostname, framed, maxConsLimit, requested)
 		if err != nil {
 			return events.WriteError(framed, "failed to create tcp tunnel: %s", err.Error())
 		}

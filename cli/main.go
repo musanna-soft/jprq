@@ -15,9 +15,10 @@ import (
 var version = "2.4"
 
 type Flags struct {
-	debug     bool
-	cname     string
-	subdomain string
+	debug      bool
+	cname      string
+	subdomain  string
+	publicPort int
 }
 
 func printVersion() {
@@ -30,6 +31,7 @@ func printHelp() {
 	fmt.Println("Commands:")
 	fmt.Println("  auth  <token>               Set authentication token from me.musanna.uz/api-keys")
 	fmt.Println("  tcp   <port>                Start a TCP tunnel on the specified port")
+	fmt.Println("  tcp   <port> -p <pubport>   Start a TCP tunnel asking for a fixed public port")
 	fmt.Println("  http  <port>                Start an HTTP tunnel on the specified port")
 	fmt.Println("  http  <port> -s <subdomain> Start an HTTP tunnel with a custom subdomain")
 	fmt.Println("  http  <port> --debug        Debug an HTTP tunnel with Jprq Debugger")
@@ -87,10 +89,11 @@ func main() {
 	defer log.Println("jprq tunnel closed")
 
 	client := jprqClient{
-		config:    conf,
-		protocol:  protocol,
-		subdomain: flags.subdomain,
-		cname:     flags.cname,
+		config:     conf,
+		protocol:   protocol,
+		subdomain:  flags.subdomain,
+		cname:      flags.cname,
+		publicPort: uint16(flags.publicPort),
 	}
 
 	go client.Start(port, flags.debug)
@@ -116,6 +119,15 @@ func parseFlags(args []string) Flags {
 				log.Fatal("missing value for cname flag, jprq --help")
 			}
 			flags.cname = args[i+1]
+		case "-p", "-port", "--port":
+			if i+1 >= len(args) {
+				log.Fatal("missing value for port flag, jprq --help")
+			}
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil || n < 1 || n > 65535 {
+				log.Fatalf("invalid public port: %s", args[i+1])
+			}
+			flags.publicPort = n
 		}
 	}
 	return flags

@@ -28,6 +28,7 @@ type jprqClient struct {
 	protocol     string
 	subdomain    string
 	cname        string
+	publicPort   uint16
 	localServer  string
 	publicServer string
 	httpDebugger debugger.Debugger
@@ -59,6 +60,7 @@ func (j *jprqClient) Start(port int, debug bool) {
 		CanonName:  j.cname,
 		AuthToken:  j.config.Local.AuthToken,
 		CliVersion: version,
+		PublicPort: j.publicPort,
 	}); err != nil {
 		log.Fatalf("failed to send request: %s\n", err)
 	}

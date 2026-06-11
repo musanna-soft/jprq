@@ -16,9 +16,9 @@ type TCPTunnel struct {
 	publicServer server.TCPServer
 }
 
-func NewTCP(hostname string, event *events.FramedConn, maxConsLimit int) (*TCPTunnel, error) {
+func NewTCP(hostname string, event *events.FramedConn, maxConsLimit int, port uint16) (*TCPTunnel, error) {
 	t := &TCPTunnel{tunnel: newTunnel(hostname, event, maxConsLimit)}
-	if err := t.publicServer.Init(0, "tcp_tunnel_public_server"); err != nil {
+	if err := t.publicServer.Init(port, "tcp_tunnel_public_server"); err != nil {
 		return t, fmt.Errorf("error init public server: %w", err)
 	}
 	return t, nil
