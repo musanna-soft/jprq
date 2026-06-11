@@ -147,6 +147,13 @@ func (j *Jprq) proxyToWebsite(conn net.Conn, buffer []byte) error {
 
 func (j *Jprq) serveEventConn(conn net.Conn) error {
 	defer conn.Close()
+	// Long-lived control channel — without TCP keepalive a stateful NAT
+	// closes the conn after a few seconds of idleness, which the user sees
+	// as `tunnel-closed` every 10–20 s.
+	if tc, ok := conn.(*net.TCPConn); ok {
+		_ = tc.SetKeepAlive(true)
+		_ = tc.SetKeepAlivePeriod(15 * time.Second)
+	}
 	framed := events.NewFramedConn(conn)
 
 	// Expect MsgTunnelRequested first.

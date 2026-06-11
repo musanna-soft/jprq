@@ -43,6 +43,13 @@ func (j *jprqClient) Start(port int, debug bool) {
 		log.Fatalf("failed to connect to event server: %s\n", err)
 	}
 	defer eventCon.Close()
+	// Stateful NATs on the client side drop idle TCP after as little as 10s,
+	// closing the multiplex channel and surfacing as "tunnel-closed" loops.
+	// TCP keepalive prods the conn so the NAT entry stays warm.
+	if tc, ok := eventCon.(*net.TCPConn); ok {
+		_ = tc.SetKeepAlive(true)
+		_ = tc.SetKeepAlivePeriod(15 * time.Second)
+	}
 	j.framed = events.NewFramedConn(eventCon)
 	j.streams = make(map[uint32]*stream)
 
