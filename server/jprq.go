@@ -262,6 +262,26 @@ func (j *Jprq) serveEventConn(conn net.Conn) error {
 
 	fmt.Printf("%s [tunnel-opened] %s: %s\n", time.Now().Format(dateFormat), user.Login, tunnelId)
 
+	// App-level keepalive: in addition to SO_KEEPALIVE, push a Ping every
+	// 10 s so even a NAT that ignores TCP keepalive packets still sees real
+	// traffic and refuses to evict the conntrack entry.
+	pingDone := make(chan struct{})
+	go func() {
+		t := time.NewTicker(10 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-pingDone:
+				return
+			case <-t.C:
+				if err := framed.Send(&events.Message{Type: events.MsgPing}); err != nil {
+					return
+				}
+			}
+		}
+	}()
+	defer close(pingDone)
+
 	// Read multiplexed frames from CLI until the connection drops.
 	for {
 		var m events.Message

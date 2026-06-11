@@ -5,7 +5,7 @@
 $ErrorActionPreference = "Stop"
 
 $Repo       = "musanna-soft/jprq"
-$ReleaseTag = "v1.2"
+$ReleaseTag = "v1.3"
 $InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "jprq" }
 
 $Arch = if ([Environment]::Is64BitOperatingSystem) { "amd64" } else { "386" }
