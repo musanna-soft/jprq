@@ -1,10 +1,12 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -155,6 +157,12 @@ func (j *jprqClient) openStream(streamID uint32) {
 			}
 		}
 
+		// Keepalive detects a silently-dead local server; an idle deadline does not
+		// close the stream (long-lived WebSockets stay quiet between frames).
+		if tc, ok := localCon.(*net.TCPConn); ok {
+			_ = tc.SetKeepAlive(true)
+			_ = tc.SetKeepAlivePeriod(30 * time.Second)
+		}
 		// Pump local → event channel as MsgConnectionData frames.
 		buf := make([]byte, events.MaxPayloadLen)
 		for {
@@ -170,6 +178,9 @@ func (j *jprqClient) openStream(streamID uint32) {
 				}
 			}
 			if err != nil {
+				if errors.Is(err, os.ErrDeadlineExceeded) {
+					continue // idle WebSocket — keep the local conn open
+				}
 				break
 			}
 		}

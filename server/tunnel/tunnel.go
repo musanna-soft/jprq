@@ -7,9 +7,11 @@
 package tunnel
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -151,6 +153,12 @@ func (t *tunnel) handlePublicConn(publicCon net.Conn, initialBuffer []byte) erro
 		}
 	}
 
+	// Keepalive so a silently-dead peer (no FIN/RST) is still detected by the OS
+	// even when the stream is legitimately idle — e.g. a quiet WebSocket.
+	if tc, ok := publicCon.(*net.TCPConn); ok {
+		_ = tc.SetKeepAlive(true)
+		_ = tc.SetKeepAlivePeriod(30 * time.Second)
+	}
 	buf := make([]byte, events.MaxPayloadLen)
 	for {
 		_ = publicCon.SetReadDeadline(time.Now().Add(30 * time.Second))
@@ -160,10 +168,13 @@ func (t *tunnel) handlePublicConn(publicCon net.Conn, initialBuffer []byte) erro
 				return werr
 			}
 		}
-		if err == io.EOF {
-			break
-		}
 		if err != nil {
+			// An idle read deadline is NOT a close: a long-lived WebSocket can sit
+			// quiet for minutes. Reset and keep reading. Real ends (EOF / RST /
+			// keepalive failure) are not ErrDeadlineExceeded, so they break out.
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				continue
+			}
 			break
 		}
 	}
