@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>jprq</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: #0f1115; color: #e6e8eb; padding: 18px; user-select: none;
+    }
+    h1 { font-size: 18px; margin: 0 0 14px; letter-spacing: .5px; }
+    h1 .dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:#666; margin-right:8px; vertical-align:middle; }
+    h1 .dot.online { background:#3ddc84; box-shadow:0 0 8px #3ddc84; }
+    h1 .dot.connecting { background:#f5a623; }
+    .card { background:#171a21; border:1px solid #242832; border-radius:10px; padding:14px; margin-bottom:12px; }
+    label { display:block; font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:#8b909a; margin:0 0 5px; }
+    input, select, button { font-size:14px; font-family:inherit; }
+    input, select {
+      width:100%; padding:9px 10px; background:#0f1115; border:1px solid #2a2f3a;
+      border-radius:7px; color:#e6e8eb; outline:none;
+    }
+    input:focus, select:focus { border-color:#3d7bff; }
+    .row { display:flex; gap:10px; }
+    .row > div { flex:1; }
+    button {
+      cursor:pointer; border:none; border-radius:7px; padding:10px 14px; font-weight:600;
+      transition:opacity .15s;
+    }
+    button:disabled { opacity:.45; cursor:not-allowed; }
+    .btn-primary { background:#3d7bff; color:#fff; width:100%; }
+    .btn-stop { background:#e0533d; color:#fff; width:100%; }
+    .btn-ghost { background:#242832; color:#cdd2db; }
+    .mt { margin-top:10px; }
+    .url { font-size:14px; word-break:break-all; }
+    .url a { color:#3ddc84; text-decoration:none; }
+    .muted { color:#8b909a; font-size:12px; }
+    #log {
+      background:#0b0d11; border:1px solid #242832; border-radius:7px; padding:8px 10px;
+      height:150px; overflow:auto; font-family:ui-monospace, Consolas, monospace;
+      font-size:11.5px; color:#aeb4bf; white-space:pre-wrap; user-select:text;
+    }
+  </style>
+</head>
+<body>
+  <h1><span class="dot" id="dot"></span>jprq <span class="muted" id="statusText">offline</span></h1>
+
+  <div class="card">
+    <label for="token">Auth token (me.musanna.uz/api-keys)</label>
+    <div class="row">
+      <div><input id="token" type="password" placeholder="paste token…" /></div>
+      <div style="flex:0 0 auto"><button class="btn-ghost" id="saveToken" style="width:auto">Save</button></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <label for="protocol">Protocol</label>
+        <select id="protocol"><option value="http">HTTP</option><option value="tcp">TCP</option></select>
+      </div>
+      <div>
+        <label for="port">Local port</label>
+        <input id="port" type="number" value="8000" min="1" max="65535" />
+      </div>
+    </div>
+    <div class="mt" id="subdomainWrap">
+      <label for="subdomain">Custom subdomain (optional)</label>
+      <input id="subdomain" type="text" placeholder="my-app" />
+    </div>
+    <div class="mt">
+      <button class="btn-primary" id="start">Start tunnel</button>
+      <button class="btn-stop" id="stop" style="display:none">Stop tunnel</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <label>Public URL</label>
+    <div class="url" id="url"><span class="muted">— not running —</span></div>
+  </div>
+
+  <div class="card">
+    <label>Log</label>
+    <div id="log"></div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const app = () => window.go.main.App;
+
+    function log(line) {
+      const el = $("log");
+      el.textContent += line + "\n";
+      el.scrollTop = el.scrollHeight;
+    }
+
+    function setStatus(s) {
+      $("statusText").textContent = s;
+      const dot = $("dot");
+      dot.className = "dot" + (s === "online" ? " online" : s === "connecting" ? " connecting" : "");
+      const running = s === "online" || s === "connecting";
+      $("start").style.display = running ? "none" : "block";
+      $("stop").style.display = running ? "block" : "none";
+    }
+
+    function setUrl(u) {
+      const isHttp = u.startsWith("http");
+      $("url").innerHTML = isHttp ? `<a href="${u}" target="_blank">${u}</a>` : u;
+    }
+
+    window.addEventListener("DOMContentLoaded", () => {
+      // Show/hide subdomain for TCP.
+      $("protocol").addEventListener("change", (e) => {
+        $("subdomainWrap").style.display = e.target.value === "http" ? "block" : "none";
+      });
+
+      $("saveToken").addEventListener("click", async () => {
+        const err = await app().SaveToken($("token").value);
+        log(err ? "token error: " + err : "token saved");
+      });
+
+      $("start").addEventListener("click", async () => {
+        setStatus("connecting");
+        $("url").innerHTML = '<span class="muted">…</span>';
+        const err = await app().StartTunnel($("protocol").value, parseInt($("port").value, 10) || 0, $("subdomain").value);
+        if (err) { log("start error: " + err); setStatus("offline"); }
+      });
+
+      $("stop").addEventListener("click", () => app().StopTunnel());
+
+      window.runtime.EventsOn("status", setStatus);
+      window.runtime.EventsOn("url", setUrl);
+      window.runtime.EventsOn("log", log);
+
+      // Prefill saved token.
+      app().GetToken().then((t) => { if (t) $("token").value = t; });
+    });
+  </script>
+</body>
+</html>

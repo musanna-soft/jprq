@@ -1,0 +1,69 @@
+name: desktop-release
+
+# Tag a release: git tag desktop-vX.Y.Z && git push origin desktop-vX.Y.Z
+on:
+  push:
+    tags:
+      - 'desktop-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows/amd64
+            tags: ''
+            artifact: jprq-desktop-windows-amd64.exe
+            built: desktop/build/bin/jprq-desktop.exe
+          - os: macos-latest
+            platform: darwin/universal
+            tags: ''
+            artifact: jprq-desktop-macos.zip
+            built: desktop/build/bin/jprq.app
+          - os: ubuntu-latest
+            platform: linux/amd64
+            tags: webkit2_41
+            artifact: jprq-desktop-linux-amd64
+            built: desktop/build/bin/jprq-desktop
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install Linux WebKit deps
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.9.2
+
+      - name: Build
+        working-directory: desktop
+        run: |
+          go mod tidy
+          wails build -platform ${{ matrix.platform }} -tags "${{ matrix.tags }}" -clean
+
+      - name: Package (macOS .app -> zip)
+        if: matrix.os == 'macos-latest'
+        run: cd desktop/build/bin && zip -r "$GITHUB_WORKSPACE/${{ matrix.artifact }}" jprq.app
+
+      - name: Package (Windows / Linux)
+        if: matrix.os != 'macos-latest'
+        shell: bash
+        run: cp "${{ matrix.built }}" "${{ matrix.artifact }}"
+
+      - name: Attach to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact }}
