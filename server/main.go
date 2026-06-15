@@ -9,6 +9,7 @@ import (
 	"os/signal"
 
 	"github.com/azimjohn/jprq/server/config"
+	"github.com/azimjohn/jprq/server/moderation"
 	"github.com/azimjohn/jprq/server/musanna"
 )
 
@@ -37,8 +38,9 @@ func main() {
 	}
 
 	auth := musanna.New()
+	mod := moderation.New()
 
-	if err := jprq.Init(conf, auth); err != nil {
+	if err := jprq.Init(conf, auth, mod); err != nil {
 		log.Fatalf("failed to init jprq %v", err)
 	}
 

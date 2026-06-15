@@ -11,6 +11,7 @@ import (
 
 	"github.com/azimjohn/jprq/server/config"
 	"github.com/azimjohn/jprq/server/events"
+	"github.com/azimjohn/jprq/server/moderation"
 	"github.com/azimjohn/jprq/server/musanna"
 	"github.com/azimjohn/jprq/server/server"
 	"github.com/azimjohn/jprq/server/tunnel"
@@ -24,6 +25,7 @@ type Jprq struct {
 	publicServer    server.TCPServer
 	publicServerTLS server.TCPServer
 	authenticator   musanna.Authenticator
+	moderation      moderation.Guard
 	mu              sync.RWMutex
 	cnameMap        map[string]string
 	tcpTunnels      map[uint16]tunnel.Tunnel
@@ -31,9 +33,10 @@ type Jprq struct {
 	userTunnels     map[string]map[string]tunnel.Tunnel
 }
 
-func (j *Jprq) Init(conf config.Config, auth musanna.Authenticator) error {
+func (j *Jprq) Init(conf config.Config, auth musanna.Authenticator, mod moderation.Guard) error {
 	j.config = conf
 	j.authenticator = auth
+	j.moderation = mod
 	j.cnameMap = make(map[string]string)
 	j.tcpTunnels = make(map[uint16]tunnel.Tunnel)
 	j.httpTunnels = make(map[string]tunnel.Tunnel)
@@ -187,6 +190,9 @@ func (j *Jprq) serveEventConn(conn net.Conn) error {
 	}
 	if err := validate(&req.Subdomain); err != nil {
 		return events.WriteError(framed, "invalid subdomain %s: %s", req.Subdomain, err.Error())
+	}
+	if j.moderation.IsProfane(req.Subdomain) {
+		return events.WriteError(framed, "subdomain not allowed: %s, choose another one", req.Subdomain)
 	}
 	hostname := fmt.Sprintf("%s.%s", req.Subdomain, j.config.DomainName)
 	j.mu.Lock()
