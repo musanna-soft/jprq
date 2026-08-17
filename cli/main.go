@@ -29,7 +29,7 @@ func printVersion() {
 func printHelp() {
 	fmt.Printf("Usage: jprq <command> [arguments]\n\n")
 	fmt.Println("Commands:")
-	fmt.Println("  auth  <token>               Set authentication token from me.musanna.uz/api-keys")
+	fmt.Println("  auth  <key>                 Set the project API key from console.musanna.uz")
 	fmt.Println("  tcp   <port>                Start a TCP tunnel on the specified port")
 	fmt.Println("  tcp   <port> -p <pubport>   Start a TCP tunnel asking for a fixed public port")
 	fmt.Println("  http  <port>                Start an HTTP tunnel on the specified port")

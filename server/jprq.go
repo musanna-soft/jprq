@@ -258,15 +258,15 @@ func (j *Jprq) serveEventConn(conn net.Conn) error {
 	}
 
 	j.mu.Lock()
-	if _, ok := j.userTunnels[user.Login]; !ok {
-		j.userTunnels[user.Login] = make(map[string]tunnel.Tunnel)
+	if _, ok := j.userTunnels[user.ID]; !ok {
+		j.userTunnels[user.ID] = make(map[string]tunnel.Tunnel)
 	}
 	tunnelId := fmt.Sprintf("%s:%d", t.Hostname(), t.PublicServerPort())
-	j.userTunnels[user.Login][tunnelId] = t
+	j.userTunnels[user.ID][tunnelId] = t
 	j.mu.Unlock()
 	defer func() {
 		j.mu.Lock()
-		delete(j.userTunnels[user.Login], tunnelId)
+		delete(j.userTunnels[user.ID], tunnelId)
 		j.mu.Unlock()
 	}()
 

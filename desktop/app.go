@@ -62,7 +62,7 @@ func (a *App) StartTunnel(protocol string, port int, subdomain string) string {
 	}
 	token := loadToken()
 	if token == "" {
-		return "no auth token — set it first (me.musanna.uz/api-keys)"
+		return "no api key — set it first (console.musanna.uz)"
 	}
 	rc, err := fetchRemote()
 	if err != nil {
