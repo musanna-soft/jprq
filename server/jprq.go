@@ -206,6 +206,18 @@ func (j *Jprq) serveEventConn(conn net.Conn) error {
 	}
 	j.mu.Unlock()
 
+	// Iste'mol AYNAN shu yerda yoziladi: hamma tekshiruv o'tgan, tunnel esa hali
+	// ochilmagan. Oldinroq yozilsa band subdomen uchun ham hisob ketardi; keyinroq
+	// yozilsa tarif chegarasi ishlamay qolardi — platforma 429 qaytarganda tunnelni
+	// RAD ETISH kerak, yopish emas.
+	//
+	// Chaqiruv butunlay yo'q edi: funksiya yozilgan, lekin hech qayerdan
+	// chaqirilmagan. Tunnel ochilar, console'dagi iste'mol esa nol bo'lib turardi va
+	// tarif chegarasi umuman qo'llanmasdi.
+	if err := j.authenticator.ReportUsage(req.AuthToken); err != nil {
+		return events.WriteError(framed, "%s", err.Error())
+	}
+
 	var t tunnel.Tunnel
 	maxConsLimit := j.config.MaxConsPerTunnel
 

@@ -80,6 +80,13 @@ func (u User) HasScope(scope string) bool {
 
 type Authenticator interface {
 	Authenticate(token string) (User, error)
+
+	// ReportUsage records one opened tunnel against the owner's tariff.
+	//
+	// Interfeysda, chunki chaqiruvchida (`jprq.go`) faqat shu interfeys bor.
+	// Ilgari bu paket darajasidagi funksiya edi va HECH QAYERDAN chaqirilmasdi:
+	// tunnel ochilar, console'dagi iste'mol esa abadiy nol bo'lib turardi.
+	ReportUsage(token string) error
 }
 
 // RequiredScope is what a key must carry to open a tunnel. Without it any
@@ -210,7 +217,11 @@ func (m musanna) Authenticate(token string) (User, error) {
 //
 // Any other failure is reported to the caller as nil: losing a usage row is bad,
 // but taking the whole tunnel server down with the metering endpoint is worse.
-func ReportUsage(baseURL, apiKey string) error {
+func (m musanna) ReportUsage(apiKey string) error {
+	return reportUsage(m.baseURL, apiKey)
+}
+
+func reportUsage(baseURL, apiKey string) error {
 	payload, err := json.Marshal(map[string]any{
 		"meter":    Meter,
 		"quantity": 1,
